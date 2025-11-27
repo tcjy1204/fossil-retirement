@@ -1,0 +1,2045 @@
+% Copyright [yyyy] [name of copyright owner]
+% Licensed under the Apache License, Version 2.0 (the "License");
+% you may not use this file except in compliance with the License.
+% You may obtain a copy of the License at
+% http://www.apache.org/licenses/LICENSE-2.0
+% Unless required by applicable law or agreed to in writing, software
+% distributed under the License is distributed on an "AS IS" BASIS,
+% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%See the License for the specific language governing permissions and
+%limitations under the License.
+% codes for fossil fuel infrastructure retirement sequencing
+% data for running the codes are stored in the file: code and data
+% change the paths in the codes below for running codes on other computers
+clear;clc;
+tic
+current_path = fileparts(mfilename('fullpath'));
+%% coal Stated Policies
+path=fullfile(current_path, 'coal.xlsx');
+path1=fullfile(current_path, 'futureproduction.xlsx');
+pathtcs=fullfile(current_path, 'coal\STEPS.xlsx');
+coal_d0=xlsread(path,'23','d2:i1266');% emission/yr,coal output/yr, and workforce of each coal mine
+latlon=xlsread(path,'23','b2:c1266');
+procode=xlsread(path,'23','w2:w1266');
+l=size(coal_d0,1);
+t=ones(l,1);% 1 for sites with output
+coal_d=[coal_d0,t,coal_d0(:,2),latlon,procode];%11 column
+coal_d2=coal_d;
+coal_ew=xlsread(path1,'coal','k5:k31');% future coal production
+coal_ew2=coal_ew-910.7473617;% exclude coal that are not covered by inventory
+coal_r=-(coal_ew2-sum(coal_d(:,2)));%reduction in inventory needed
+per=2024:1:2050;% period span
+lper=size(per,2);
+pei=xlsread(path,'23','m2:m1266');%emission inensity of production tCO2e/t
+% sorted by output
+o_nc_o=zeros(l,lper);% output reduction by natural closure
+o_pf_o=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_o=zeros(l,lper);% output reduction by directly forced closure
+e_nc_o=zeros(l,lper);% emission reduction by natural closure
+e_pf_o=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_o=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j1266');%original environmental cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+pf=zeros(l,lper);% environmental cost with carbon tax for production emission
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+coalemo=zeros(l,lper);
+coalomo=zeros(l,lper);
+coallmo=zeros(l,lper);
+coalpfmo=zeros(l,lper);
+coalomob=zeros(l,lper);
+lato=zeros(l,lper);
+lono=zeros(l,lper);
+procodeo=zeros(l,lper);
+for i=1:lper % 24-50
+    pf(:,i)=op-pei.*cart(i,1);
+    spf(:,i)=coal_d(:,5).*cart(i,1);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*coal_d(:,2);% total environmental cost M CNY
+    coal_d=[coal_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if coal_d(j,6)<=i% no resources
+            o_nc_o(j,i)=coal_d2(j,2);
+            e_nc_o(j,i)=coal_d2(j,1);
+            coal_d(j,7)=0;
+            coal_d(j,1)=0;
+            coal_d(j,2)=0;
+            coal_d(j,3)=0;
+            coal_d(j,12)=0;
+        end
+        if pf(j,i)<=0 && coal_d(j,6)>i% stranded by carbon tax
+            o_pf_o(j,i)=coal_d2(j,2);
+            e_pf_o(j,i)=coal_d2(j,1);
+            coal_d(j,7)=0;
+            coal_d(j,1)=0;
+            coal_d(j,2)=0;
+            coal_d(j,3)=0;
+            coal_d(j,12)=0;
+        end
+    end
+    coal_d_so=sortrows(coal_d,[7 8 -4]);% sorted by status, output and depth
+    coalemo(:,i)=coal_d_so(:,1);% emission matrix sorted by status, output and depth
+    coalomo(:,i)=coal_d_so(:,2);% output matrix sorted by status, output and depth
+    coallmo(:,i)=coal_d_so(:,3);% labor matrix sorted by status, output and depth
+    coalpfmo(:,i)=coal_d_so(:,12);% environmental cost matrix sorted by status, output and depth
+    lato(:,i)=coal_d_so(:,9);
+    lono(:,i)=coal_d_so(:,10);
+    procodeo(:,i)=coal_d_so(:,11);
+    coalemo0=coalemo;
+    coalomo0=coalomo;
+    coallmo0=coallmo;
+    coalpfmo0=coalpfmo;
+    coalomob(:,i)=coal_d_so(:,8);
+    coal_r(coal_r>sum(coalomob(:,i)))=sum(coalomob(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(coalomob(1:j,i))>=coal_r(i) && sum(coalomob(1:(j-1),i))<coal_r(i)
+            coalemo(1:(j-1),i)=0;
+            coalomo(1:(j-1),i)=0;
+            coallmo(1:(j-1),i)=0;
+            coalpfmo(1:(j-1),i)=0;
+            coalomo(j,i)=sum(coalomob(1:j,i))-coal_r(i);
+            coalemo(j,i)=coalemo0(j,i)./coalomob(j,i).*(sum(coalomob(1:j,i))-coal_r(i));
+            coallmo(j,i)=coallmo0(j,i)./coalomob(j,i).*(sum(coalomob(1:j,i))-coal_r(i));
+            coalpfmo(j,i)=coalpfmo0(j,i)./coalomob(j,i).*(sum(coalomob(1:j,i))-coal_r(i));           
+        end
+    end
+    for j=1:l
+        if coalemo(j,i)==0 && coal_d_so(j,7)==1
+            o_fo_o(j,i)=coalomob(j,i);
+            e_fo_o(j,i)=coalemo0(j,i);
+        end
+        if coalemo(j,i)~=0 && coalemo(j,i)<coalemo0(j,i)
+            o_fo_o(j,i)=(coal_r(i)-sum(coalomob(1:j-1,i)));
+            e_fo_o(j,i)=coalemo0(j,i)./coalomob(j,i).*o_fo_o(j,i);
+        end
+    end
+end
+coal_so_ye=sum(coalemo,1)/1000;% yearly emissionGtCO2e
+coal_so_yo=sum(coalomo,1);% yearly output Mt
+
+% sorted by emission intensity
+o_nc_e=zeros(l,lper);% output reduction by natural closure
+o_pf_e=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_e=zeros(l,lper);% output reduction by directly forced closure
+e_nc_e=zeros(l,lper);% emission reduction by natural closure
+e_pf_e=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_e=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j1266');%original cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+pf=zeros(l,lper);
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+coaleme=zeros(l,lper);
+coalome=zeros(l,lper);
+coallme=zeros(l,lper);
+coalpfme=zeros(l,lper);
+coalomeb=zeros(l,lper);
+late=zeros(l,lper);
+lone=zeros(l,lper);
+procodee=zeros(l,lper);
+coal_d=[coal_d0,t,coal_d0(:,2),latlon,procode];
+for i=1:lper % 24-50
+    pf(:,i)=op-pei.*cart(i,1);
+    spf(:,i)=coal_d(:,5).*cart(i,1);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*coal_d(:,2);% total environmental cost M CNY
+    coal_d=[coal_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if coal_d(j,6)<=i% no resources        
+            o_nc_e(j,i)=coal_d2(j,2);
+            e_nc_e(j,i)=coal_d2(j,1);
+            coal_d(j,7)=0;
+            coal_d(j,1)=0;
+            coal_d(j,2)=0;
+            coal_d(j,3)=0;
+            coal_d(j,12)=0;
+        end   
+        if pf(j,i)<=0 && coal_d(j,6)>i% stranded by carbon tax
+            o_pf_e(j,i)=coal_d2(j,2);
+            e_pf_e(j,i)=coal_d2(j,1);
+            coal_d(j,7)=0;
+            coal_d(j,1)=0;
+            coal_d(j,2)=0;
+            coal_d(j,3)=0;
+            coal_d(j,12)=0;           
+        end
+    end
+    coal_d_se=sortrows(coal_d,[7 -5 -4]);% sorted by status, emission intensity and depth
+    coaleme(:,i)=coal_d_se(:,1);% emission matrix sorted by status, output and depth
+    coalome(:,i)=coal_d_se(:,2);% output matrix sorted by status, output and depth
+    coallme(:,i)=coal_d_se(:,3);% labor matrix sorted by status, output and depth
+    coalpfme(:,i)=coal_d_se(:,12);% environmental cost matrix sorted by status, output and depth
+    late(:,i)=coal_d_se(:,9);
+    lone(:,i)=coal_d_se(:,10);
+    procodee(:,i)=coal_d_se(:,11);
+    coaleme0=coaleme;
+    coalome0=coalome;
+    coallme0=coallme;
+    coalpfme0=coalpfme;
+    coalomeb(:,i)=coal_d_se(:,8);
+    coal_r(coal_r>sum(coalomeb(:,i)))=sum(coalomeb(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(coalomeb(1:j,i))>=coal_r(i) && sum(coalomeb(1:(j-1),i))<coal_r(i)
+            coaleme(1:(j-1),i)=0;
+            coalome(1:(j-1),i)=0;
+            coallme(1:(j-1),i)=0;
+            coalpfme(1:(j-1),i)=0;
+            coalome(j,i)=sum(coalomeb(1:j,i))-coal_r(i);
+            coaleme(j,i)=coaleme0(j,i)./coalomeb(j,i).*(sum(coalomeb(1:j,i))-coal_r(i));
+            coallme(j,i)=coallme0(j,i)./coalomeb(j,i).*(sum(coalomeb(1:j,i))-coal_r(i));
+            coalpfme(j,i)=coalpfme0(j,i)./coalomeb(j,i).*(sum(coalomeb(1:j,i))-coal_r(i));           
+        end
+    end
+
+    for j=1:l
+        if coaleme(j,i)==0 && coal_d_se(j,7)==1
+            o_fo_e(j,i)=coalomeb(j,i);
+            e_fo_e(j,i)=coaleme0(j,i);
+        end
+        if coaleme(j,i)~=0 && coaleme(j,i)<coaleme0(j,i)
+            o_fo_e(j,i)=(coal_r(i)-sum(coalomeb(1:j-1,i)));
+            e_fo_e(j,i)=coaleme0(j,i)./coalomeb(j,i).*o_fo_e(j,i);
+        end
+    end
+end
+coal_se_ye=sum(coaleme,1)/1000;% yearly emission GtCO2e
+coal_se_yo=sum(coalome,1);% yearly output Mt
+
+% output
+xlswrite(pathtcs,coalomo,'coalomo','a1');
+xlswrite(pathtcs,coalemo,'coalemo','a1');
+xlswrite(pathtcs,coallmo,'coallmo','a1');
+xlswrite(pathtcs,coalpfmo,'coalpfmo','a1');
+xlswrite(pathtcs,coalome,'coalome','a1');
+xlswrite(pathtcs,coaleme,'coaleme','a1');
+xlswrite(pathtcs,coallme,'coallme','a1');
+xlswrite(pathtcs,coalpfme,'coalpfme','a1');
+xlswrite(pathtcs,lato,'lato','a1');
+xlswrite(pathtcs,lono,'lono','a1');
+xlswrite(pathtcs,late,'late','a1');
+xlswrite(pathtcs,lone,'lone','a1');
+
+pceo=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodeo(j,i)==pceo(g,28)
+                pceo(g,i)=pceo(g,i)+coalemo(j,i);
+            end
+        end
+    end
+end
+tpceo=sum(pceo(:,1:27),2);
+
+pcee=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodee(j,i)==pcee(g,28)
+                pcee(g,i)=pcee(g,i)+coaleme(j,i);
+            end
+        end
+    end
+end
+tpcee=sum(pcee(:,1:27),2);
+%% coal Announced Pledges
+path=fullfile(current_path, 'coal.xlsx');
+path1=fullfile(current_path, 'futureproduction.xlsx');
+pathtca=fullfile(current_path, 'coal\APS.xlsx');
+coal_d0=xlsread(path,'23','d2:i1266');% emission/yr,coal output/yr, and workforce of each coal mine
+l=size(coal_d0,1);
+t=ones(l,1);% 1 for sites with output
+coal_d=[coal_d0,t,coal_d0(:,2),latlon,procode];
+coal_d2=coal_d;
+coal_ew=xlsread(path1,'coal','l5:l31');% future coal production
+coal_ew2=coal_ew-910.7473617;% exclude coal that are not covered by inventory
+coal_r=-(coal_ew2-sum(coal_d(:,2)));%reduction in inventory needed
+per=2024:1:2050;% period span
+lper=size(per,2);
+pei=xlsread(path,'23','m2:m1266');%emission inensity of production tCO2e/t
+% sorted by output
+o_nc_o=zeros(l,lper);% output reduction by natural closure
+o_pf_o=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_o=zeros(l,lper);% output reduction by directly forced closure
+e_nc_o=zeros(l,lper);% emission reduction by natural closure
+e_pf_o=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_o=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j1266');%original environmental cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+coalemo=zeros(l,lper);
+coalomo=zeros(l,lper);
+coallmo=zeros(l,lper);
+coalpfmo=zeros(l,lper);
+coalomob=zeros(l,lper);
+lato=zeros(l,lper);
+lono=zeros(l,lper);
+procodeo=zeros(l,lper);
+for i=1:lper % 24-50
+    pf(:,i)=op-pei.*cart(i,2);
+    spf(:,i)=coal_d(:,5).*cart(i,2);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*coal_d(:,2);% total environmental cost M CNY
+    coal_d=[coal_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if coal_d(j,6)<=i% no resources
+            o_nc_o(j,i)=coal_d2(j,2);
+            e_nc_o(j,i)=coal_d2(j,1);
+            coal_d(j,7)=0;
+            coal_d(j,1)=0;
+            coal_d(j,2)=0;
+            coal_d(j,3)=0;
+            coal_d(j,12)=0;           
+        end
+        if pf(j,i)<=0 && coal_d(j,6)>i% stranded by carbon tax
+            o_pf_o(j,i)=coal_d2(j,2);
+            e_pf_o(j,i)=coal_d2(j,1);
+            coal_d(j,7)=0;
+            coal_d(j,1)=0;
+            coal_d(j,2)=0;
+            coal_d(j,3)=0;
+            coal_d(j,12)=0;           
+        end
+    end
+    coal_d_so=sortrows(coal_d,[7 8 -4]);% sorted by status, output and depth
+    coalemo(:,i)=coal_d_so(:,1);% emission matrix sorted by status, output and depth
+    coalomo(:,i)=coal_d_so(:,2);% output matrix sorted by status, output and depth
+    coallmo(:,i)=coal_d_so(:,3);% labor matrix sorted by status, output and depth
+    coalpfmo(:,i)=coal_d_so(:,12);% environmental cost matrix sorted by status, output and depth
+    lato(:,i)=coal_d_so(:,9);
+    lono(:,i)=coal_d_so(:,10);
+    procodeo(:,i)=coal_d_so(:,11);
+    coalemo0=coalemo;
+    coalomo0=coalomo;
+    coallmo0=coallmo;
+    coalpfmo0=coalpfmo;
+    coalomob(:,i)=coal_d_so(:,8);
+    coal_r(coal_r>sum(coalomob(:,i)))=sum(coalomob(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(coalomob(1:j,i))>=coal_r(i) && sum(coalomob(1:(j-1),i))<coal_r(i)
+            coalemo(1:(j-1),i)=0;
+            coalomo(1:(j-1),i)=0;
+            coallmo(1:(j-1),i)=0;
+            coalpfmo(1:(j-1),i)=0;
+            coalomo(j,i)=sum(coalomob(1:j,i))-coal_r(i);
+            coalemo(j,i)=coalemo0(j,i)./coalomob(j,i).*(sum(coalomob(1:j,i))-coal_r(i));
+            coallmo(j,i)=coallmo0(j,i)./coalomob(j,i).*(sum(coalomob(1:j,i))-coal_r(i));
+            coalpfmo(j,i)=coalpfmo0(j,i)./coalomob(j,i).*(sum(coalomob(1:j,i))-coal_r(i));           
+        end
+    end
+    for j=1:l
+        if coalemo(j,i)==0 && coal_d_so(j,7)==1
+            o_fo_o(j,i)=coalomob(j,i);
+            e_fo_o(j,i)=coalemo0(j,i);
+        end
+        if coalemo(j,i)~=0 && coalemo(j,i)<coalemo0(j,i)
+            o_fo_o(j,i)=(coal_r(i)-sum(coalomob(1:j-1,i)));
+            e_fo_o(j,i)=coalemo0(j,i)./coalomob(j,i).*o_fo_o(j,i);
+        end
+    end
+end
+coal_so_ye=sum(coalemo,1)/1000;% yearly emissionGtCO2e
+coal_so_ye_cum=cumsum(coal_so_ye);% cumulative yearly emission
+coal_so_yo=sum(coalomo,1);% yearly output Mt
+% sorted by emission intensity
+o_nc_e=zeros(l,lper);% output reduction by natural closure
+o_pf_e=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_e=zeros(l,lper);% output reduction by directly forced closure
+e_nc_e=zeros(l,lper);% emission reduction by natural closure
+e_pf_e=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_e=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j1266');%original cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+pf=zeros(l,lper);
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+coaleme=zeros(l,lper);
+coalome=zeros(l,lper);
+coallme=zeros(l,lper);
+coalpfme=zeros(l,lper);
+coalomeb=zeros(l,lper);
+late=zeros(l,lper);
+lone=zeros(l,lper);
+procodee=zeros(l,lper);
+coal_d=[coal_d0,t,coal_d0(:,2),latlon,procode];
+for i=1:lper % 24-50
+    pf(:,i)=op-pei.*cart(i,2);
+    spf(:,i)=coal_d(:,5).*cart(i,2);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*coal_d(:,2);% total environmental cost M CNY
+    coal_d=[coal_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if coal_d(j,6)<=i% no resources
+            o_nc_e(j,i)=coal_d2(j,2);
+            e_nc_e(j,i)=coal_d2(j,1);
+            coal_d(j,7)=0;
+            coal_d(j,1)=0;
+            coal_d(j,2)=0;
+            coal_d(j,3)=0;
+            coal_d(j,12)=0;           
+        end
+        if pf(j,i)<=0 && coal_d(j,6)>i% stranded by carbon tax
+            o_pf_e(j,i)=coal_d2(j,2);
+            e_pf_e(j,i)=coal_d2(j,1);
+            coal_d(j,7)=0;
+            coal_d(j,1)=0;
+            coal_d(j,2)=0;
+            coal_d(j,3)=0;  
+            coal_d(j,12)=0;           
+        end
+    end   
+    coal_d_se=sortrows(coal_d,[7 -5 -4]);% sorted by status, emission intensity and depth
+    coaleme(:,i)=coal_d_se(:,1);% emission matrix sorted by status, output and depth
+    coalome(:,i)=coal_d_se(:,2);% output matrix sorted by status, output and depth
+    coallme(:,i)=coal_d_se(:,3);% labor matrix sorted by status, output and depth
+    coalpfme(:,i)=coal_d_se(:,12);% environmental cost matrix sorted by status, output and depth
+    late(:,i)=coal_d_se(:,9);
+    lone(:,i)=coal_d_se(:,10);
+    procodee(:,i)=coal_d_se(:,11);
+    coaleme0=coaleme;
+    coalome0=coalome;
+    coallme0=coallme;    
+    coalpfme0=coalpfme;
+    coalomeb(:,i)=coal_d_se(:,8);
+    coal_r(coal_r>sum(coalomeb(:,i)))=sum(coalomeb(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(coalomeb(1:j,i))>=coal_r(i) && sum(coalomeb(1:(j-1),i))<coal_r(i)
+            coaleme(1:(j-1),i)=0;
+            coalome(1:(j-1),i)=0;
+            coallme(1:(j-1),i)=0;     
+            coalpfme(1:(j-1),i)=0;
+            coalome(j,i)=sum(coalomeb(1:j,i))-coal_r(i);
+            coaleme(j,i)=coaleme0(j,i)./coalomeb(j,i).*(sum(coalomeb(1:j,i))-coal_r(i));
+            coallme(j,i)=coallme0(j,i)./coalomeb(j,i).*(sum(coalomeb(1:j,i))-coal_r(i));  
+            coalpfme(j,i)=coalpfme0(j,i)./coalomeb(j,i).*(sum(coalomeb(1:j,i))-coal_r(i));           
+        end
+    end
+    for j=1:l
+        if coaleme(j,i)==0 && coal_d_se(j,7)==1
+            o_fo_e(j,i)=coalomeb(j,i);
+            e_fo_e(j,i)=coaleme0(j,i);
+        end
+        if coaleme(j,i)~=0 && coaleme(j,i)<coaleme0(j,i)
+            o_fo_e(j,i)=(coal_r(i)-sum(coalomeb(1:j-1,i)));
+            e_fo_e(j,i)=coaleme0(j,i)./coalomeb(j,i).*o_fo_e(j,i);
+        end
+    end
+end
+coal_se_ye=sum(coaleme,1)/1000;% yearly emission GtCO2e
+coal_se_ye_cum=cumsum(coal_se_ye);% cumulative yearly emission
+coal_se_yo=sum(coalome,1);% yearly output Mt
+% output
+xlswrite(pathtca,coalomo,'coalomo','a1');
+xlswrite(pathtca,coalemo,'coalemo','a1');
+xlswrite(pathtca,coallmo,'coallmo','a1');
+xlswrite(pathtca,coalpfmo,'coalpfmo','a1');
+xlswrite(pathtca,coalome,'coalome','a1');
+xlswrite(pathtca,coaleme,'coaleme','a1');
+xlswrite(pathtca,coallme,'coallme','a1');
+xlswrite(pathtca,coalpfme,'coalpfme','a1');
+xlswrite(pathtca,lato,'lato','a1');
+xlswrite(pathtca,lono,'lono','a1');
+xlswrite(pathtca,late,'late','a1');
+xlswrite(pathtca,lone,'lone','a1');
+
+pceo=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodeo(j,i)==pceo(g,28)
+                pceo(g,i)=pceo(g,i)+coalemo(j,i);
+            end
+        end
+    end
+end
+tpceo=sum(pceo(:,1:27),2);
+
+pcee=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodee(j,i)==pcee(g,28)
+                pcee(g,i)=pcee(g,i)+coaleme(j,i);
+            end
+        end
+    end
+end
+tpcee=sum(pcee(:,1:27),2);
+%% oil Stated Policies
+path=fullfile(current_path, 'oil.xlsx');
+path1=fullfile(current_path, 'futureproduction.xlsx');
+pathtcs=fullfile(current_path, 'oil\STEPS.xlsx');
+oil_d0=xlsread(path,'23','d2:i842');% emission/yr,oil output/yr, and workforce of each oil field
+latlon=xlsread(path,'23','b2:c842');
+procode=xlsread(path,'23','m2:m842');
+procode(isnan(procode))=32;
+l=size(oil_d0,1);
+t=ones(l,1);% 1 for sites with output
+oil_d=[oil_d0,t,oil_d0(:,2),latlon,procode];
+oil_d2=oil_d;
+oil_ew=xlsread(path1,'oil','k5:k31');% future oil production
+oil_ew2=oil_ew-24.29;% exclude oil that are not covered by inventory
+oil_r=-(oil_ew2-sum(oil_d(:,2)));%reduction in inventory needed
+per=2024:1:2050;% period span
+lper=size(per,2);
+
+pei=xlsread(path,'23','m2:m842');%emission inensity of production tCO2e/t
+% sorted by output
+o_nc_o=zeros(l,lper);% output reduction by natural closure
+o_pf_o=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_o=zeros(l,lper);% output reduction by directly forced closure
+e_nc_o=zeros(l,lper);% emission reduction by natural closure
+e_pf_o=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_o=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j842');%original environmental cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+c=xlsread(path,'23','k2:k842');%original cost without carbon tax and employment
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+oilemo=zeros(l,lper);
+oilomo=zeros(l,lper);
+oillmo=zeros(l,lper);
+oilpfmo=zeros(l,lper);
+oilomob=zeros(l,lper);
+lato=zeros(l,lper);
+lono=zeros(l,lper);
+procodeo=zeros(l,lper);
+
+for i=1:lper % 24-50
+    pf(:,i)=op-pei.*cart(i,1);
+    spf(:,i)=c+oil_d(:,5).*cart(i,1);% cost considering all emissions
+    tpf(:,i)=spf(:,i).*oil_d(:,2);% total cost M CNY
+    oil_d=[oil_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if oil_d(j,6)<=i% no resources          
+            o_nc_o(j,i)=oil_d2(j,2);
+            e_nc_o(j,i)=oil_d2(j,1);
+            oil_d(j,7)=0;
+            oil_d(j,1)=0;
+            oil_d(j,2)=0;
+            oil_d(j,3)=0;
+            oil_d(j,12)=0;          
+        end        
+        if pf(j,i)<=0 && oil_d(j,6)>i% stranded by carbon tax
+            o_pf_o(j,i)=oil_d2(j,2);
+            e_pf_o(j,i)=oil_d2(j,1);
+            oil_d(j,7)=0;
+            oil_d(j,1)=0;
+            oil_d(j,2)=0;
+            oil_d(j,3)=0;
+            oil_d(j,12)=0;                    
+        end
+    end
+    oil_d_so=sortrows(oil_d,[7 8 -4]);% sorted by status, output and cost
+    oilemo(:,i)=oil_d_so(:,1);% emission matrix sorted by status, output and cost
+    oilomo(:,i)=oil_d_so(:,2);% output matrix sorted by status, output and cost
+    oillmo(:,i)=oil_d_so(:,3);% output matrix sorted by status, output and cost
+    oilpfmo(:,i)=oil_d_so(:,12);% environmental cost matrix sorted by status, output and depth
+    lato(:,i)=oil_d_so(:,9);
+    lono(:,i)=oil_d_so(:,10);
+    procodeo(:,i)=oil_d_so(:,11);
+    oilemo0=oilemo;
+    oilomo0=oilomo;
+    oillmo0=oillmo;
+    oilpfmo0=oilpfmo;    
+    oilomob(:,i)=oil_d_so(:,8);
+    oil_r(oil_r>sum(oilomob(:,i)))=sum(oilomob(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(oilomob(1:j,i))>=oil_r(i) && sum(oilomob(1:(j-1),i))<oil_r(i) && oilomo0(j,i)==1
+            oilemo(1:(j-1),i)=0;
+            oilomo(1:(j-1),i)=0;
+            oillmo(1:(j-1),i)=0;
+            oilpfmo(1:(j-1),i)=0;            
+            oilomo(j,i)=sum(oilomob(1:j,i))-oil_r(i);
+            oilemo(j,i)=oilemo0(j,i)./oilomob(j,i).*(sum(oilomob(1:j,i))-oil_r(i));
+            oillmo(j,i)=oillmo0(j,i)./oilomob(j,i).*(sum(oilomob(1:j,i))-oil_r(i));       
+            oilpfmo(j,i)=oilpfmo0(j,i)./oilomob(j,i).*(sum(oilomob(1:j,i))-oil_r(i));                  
+        end
+    end
+    for j=1:l
+        if oilemo(j,i)==0 && oil_d_so(j,7)==1
+            o_fo_o(j,i)=oilomob(j,i);
+            e_fo_o(j,i)=oilemo0(j,i);
+        end
+        if oilemo(j,i)~=0 && oilemo(j,i)<oilemo0(j,i)
+            o_fo_o(j,i)=(oil_r(i)-sum(oilomob(1:j-1,i)));
+            e_fo_o(j,i)=oilemo0(j,i)./oilomob(j,i).*o_fo_o(j,i);
+        end
+    end
+end
+oil_so_ye=sum(oilemo,1)/1000;% yearly emissionGtCO2e
+oil_so_yo=sum(oilomo,1);% yearly output Mt
+
+% sorted by emission intensity
+o_nc_e=zeros(l,lper);% output reduction by natural closure
+o_pf_e=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_e=zeros(l,lper);% output reduction by directly forced closure
+e_nc_e=zeros(l,lper);% emission reduction by natural closure
+e_pf_e=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_e=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j842');%original cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+c=xlsread(path,'23','k2:k842');%original cost without carbon tax and employment
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+oileme=zeros(l,lper);
+oilome=zeros(l,lper);
+oillme=zeros(l,lper);
+oilpfme=zeros(l,lper);
+oilomeb=zeros(l,lper);
+late=zeros(l,lper);
+lone=zeros(l,lper);
+procodee=zeros(l,lper);
+oil_d=[oil_d0,t,oil_d0(:,2),latlon,procode];
+for i=1:lper % 24-50
+    pf(:,i)=op-pei.*cart(i,1);
+    spf(:,i)=c+oil_d(:,5).*cart(i,1);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*oil_d(:,2);% total environmental cost M CNY
+    oil_d=[oil_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if oil_d(j,6)<=i% no resources     
+            o_nc_e(j,i)=oil_d2(j,2);
+            e_nc_e(j,i)=oil_d2(j,1);
+            oil_d(j,7)=0;
+            oil_d(j,1)=0;
+            oil_d(j,2)=0;
+            oil_d(j,3)=0;   
+            oil_d(j,12)=0;              
+        end       
+        if pf(j,i)<=0 && oil_d(j,6)>i% stranded by carbon tax
+            o_pf_e(j,i)=oil_d2(j,2);
+            e_pf_e(j,i)=oil_d2(j,1);
+            oil_d(j,7)=0;
+            oil_d(j,1)=0;
+            oil_d(j,2)=0;
+            oil_d(j,3)=0;  
+            oil_d(j,12)=0;                          
+        end
+    end    
+    oil_d_se=sortrows(oil_d,[7 -5 -4]);% sorted by status, emission intensity and cost
+    oileme(:,i)=oil_d_se(:,1);% emission matrix sorted by status, output and cost
+    oilome(:,i)=oil_d_se(:,2);% output matrix sorted by status, output and cost
+    oillme(:,i)=oil_d_se(:,3);% output matrix sorted by status, output and cost 
+    oilpfme(:,i)=oil_d_se(:,12);% environmental cost matrix sorted by status, output and depth
+    late(:,i)=oil_d_se(:,9);
+    lone(:,i)=oil_d_se(:,10);
+    procodee(:,i)=oil_d_se(:,11);
+    oileme0=oileme;
+    oilome0=oilome;
+    oillme0=oillme; 
+    oilpfme0=oilpfme;     
+    oilomeb(:,i)=oil_d_se(:,8);
+    oil_r(oil_r>sum(oilomeb(:,i)))=sum(oilomeb(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(oilomeb(1:j,i))>=oil_r(i) && sum(oilomeb(1:(j-1),i))<oil_r(i) && oilome0(j,i)==1
+            oileme(1:(j-1),i)=0;
+            oilome(1:(j-1),i)=0;
+            oillme(1:(j-1),i)=0;  
+            oilpfme(1:(j-1),i)=0;              
+            oilome(j,i)=sum(oilomeb(1:j,i))-oil_r(i);
+            oileme(j,i)=oileme0(j,i)./oilomeb(j,i).*(sum(oilomeb(1:j,i))-oil_r(i));
+            oillme(j,i)=oillme0(j,i)./oilomeb(j,i).*(sum(oilomeb(1:j,i))-oil_r(i));  
+            oilpfme(j,i)=oilpfme0(j,i)./oilomeb(j,i).*(sum(oilomeb(1:j,i))-oil_r(i));              
+        end
+    end
+    for j=1:l
+        if oileme(j,i)==0 && oil_d_se(j,7)==1
+            o_fo_e(j,i)=oilomeb(j,i);
+            e_fo_e(j,i)=oileme0(j,i);
+        end
+        if oileme(j,i)~=0 && oileme(j,i)<oileme0(j,i)
+            o_fo_e(j,i)=(oil_r(i)-sum(oilomeb(1:j-1,i)));
+            e_fo_e(j,i)=oileme0(j,i)./oilomeb(j,i).*o_fo_e(j,i);
+        end
+    end
+end
+oil_se_ye=sum(oileme,1)/1000;% yearly emission GtCO2e
+oil_se_yo=sum(oilome,1);% yearly output Mt
+
+% output
+xlswrite(pathtcs,oilomo,'oilomo','a1');
+xlswrite(pathtcs,oilemo,'oilemo','a1');
+xlswrite(pathtcs,oillmo,'oillmo','a1');
+xlswrite(pathtcs,oilpfmo,'oilpfmo','a1');
+xlswrite(pathtcs,oilome,'oilome','a1');
+xlswrite(pathtcs,oileme,'oileme','a1');
+xlswrite(pathtcs,oillme,'oillme','a1');
+xlswrite(pathtcs,oilpfme,'oilpfme','a1');
+xlswrite(pathtcs,lato,'lato','a1');
+xlswrite(pathtcs,lono,'lono','a1');
+xlswrite(pathtcs,late,'late','a1');
+xlswrite(pathtcs,lone,'lone','a1');
+
+pceo=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodeo(j,i)==pceo(g,28)
+                pceo(g,i)=pceo(g,i)+oilemo(j,i);
+            end
+        end
+    end
+end
+tpceo=sum(pceo(:,1:27),2);
+
+pcee=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodee(j,i)==pcee(g,28)
+                pcee(g,i)=pcee(g,i)+oileme(j,i);
+            end
+        end
+    end
+end
+tpcee=sum(pcee(:,1:27),2);
+%% oil Announced Pledges
+path=fullfile(current_path, 'oil.xlsx');
+path1=fullfile(current_path, 'futureproduction.xlsx');
+pathtca=fullfile(current_path, 'oil\APS.xlsx');
+oil_d0=xlsread(path,'23','d2:i842');% emission/yr,oil output/yr, and workforce of each oil field
+l=size(oil_d0,1);
+t=ones(l,1);% 1 for sites with output
+oil_d=[oil_d0,t,oil_d0(:,2),latlon,procode];
+oil_d2=oil_d;
+oil_d3=oil_d;
+oil_ew=xlsread(path1,'oil','l5:l31');% future oil production
+oil_ew2=oil_ew-24.29;% exclude oil that are not covered by inventory
+oil_r=-(oil_ew2-sum(oil_d(:,2)));%reduction in inventory needed
+per=2024:1:2050;% period span
+lper=size(per,2);
+
+pei=xlsread(path,'23','m2:m842');%emission inensity of production tCO2e/t
+% sorted by output
+o_nc_o=zeros(l,lper);% output reduction by natural closure
+o_pf_o=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_o=zeros(l,lper);% output reduction by directly forced closure
+e_nc_o=zeros(l,lper);% emission reduction by natural closure
+e_pf_o=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_o=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j842');%original environmental cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+c=xlsread(path,'23','k2:k842');%original cost without carbon tax and employment
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+oilemo=zeros(l,lper);
+oilomo=zeros(l,lper);
+oillmo=zeros(l,lper);
+oilpfmo=zeros(l,lper);
+oilomob=zeros(l,lper);
+lato=zeros(l,lper);
+lono=zeros(l,lper);
+procodeo=zeros(l,lper);
+for i=1:lper % 24-50    
+    pf(:,i)=op-pei.*cart(i,2);
+    spf(:,i)=c+oil_d(:,5).*cart(i,2);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*oil_d(:,2);% total environmental cost M CNY
+    oil_d=[oil_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if oil_d(j,6)<=i% no resources        
+            o_nc_o(j,i)=oil_d2(j,2);
+            e_nc_o(j,i)=oil_d2(j,1);
+            oil_d(j,7)=0;
+            oil_d(j,1)=0;
+            oil_d(j,2)=0;
+            oil_d(j,3)=0;  
+            oil_d(j,12)=0;             
+        end        
+        if pf(j,i)<=0 && oil_d(j,6)>i% stranded by carbon tax
+            o_pf_o(j,i)=oil_d2(j,2);
+            e_pf_o(j,i)=oil_d2(j,1);
+            oil_d(j,7)=0;
+            oil_d(j,1)=0;
+            oil_d(j,2)=0;
+            oil_d(j,3)=0;     
+            oil_d(j,12)=0;                        
+        end
+    end
+    oil_d_so=sortrows(oil_d,[7 8 -4]);% sorted by status, output and cost
+    oilemo(:,i)=oil_d_so(:,1);% emission matrix sorted by status, output and cost
+    oilomo(:,i)=oil_d_so(:,2);% output matrix sorted by status, output and cost
+    oillmo(:,i)=oil_d_so(:,3);% output matrix sorted by status, output and cost    
+    oilpfmo(:,i)=oil_d_so(:,12);% output matrix sorted by status, output and cost        
+    lato(:,i)=oil_d_so(:,9);
+    lono(:,i)=oil_d_so(:,10);
+    procodeo(:,i)=oil_d_so(:,11);
+    oilemo0=oilemo;
+    oilomo0=oilomo;
+    oillmo0=oillmo; 
+    oilpfmo0=oilpfmo;     
+    oilomob(:,i)=oil_d_so(:,8);
+    oil_r(oil_r>sum(oilomob(:,i)))=sum(oilomob(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(oilomob(1:j,i))>=oil_r(i) && sum(oilomob(1:(j-1),i))<oil_r(i) && oilomo0(j,i)==1
+            oilemo(1:(j-1),i)=0;
+            oilomo(1:(j-1),i)=0;
+            oillmo(1:(j-1),i)=0;  
+            oilpfmo(1:(j-1),i)=0;              
+            oilomo(j,i)=sum(oilomob(1:j,i))-oil_r(i);
+            oilemo(j,i)=oilemo0(j,i)./oilomob(j,i).*(sum(oilomob(1:j,i))-oil_r(i));
+            oilpfmo(j,i)=oilpfmo0(j,i)./oilomob(j,i).*(sum(oilomob(1:j,i))-oil_r(i));              
+        end
+    end
+    for j=1:l
+        if oilemo(j,i)==0 && oil_d_so(j,7)==1
+            o_fo_o(j,i)=oilomob(j,i);
+            e_fo_o(j,i)=oilemo0(j,i);
+        end
+        if oilemo(j,i)~=0 && oilemo(j,i)<oilemo0(j,i)
+            o_fo_o(j,i)=(oil_r(i)-sum(oilomob(1:j-1,i)));
+            e_fo_o(j,i)=oilemo0(j,i)./oilomob(j,i).*o_fo_o(j,i);
+        end
+    end
+end
+oil_so_ye=sum(oilemo,1)/1000;% yearly emissionGtCO2e
+oil_so_ye_cum=cumsum(oil_so_ye);% cumulative yearly emission
+oil_so_yo=sum(oilomo,1);% yearly output Mt
+% sorted by emission intensity
+o_nc_e=zeros(l,lper);% output reduction by natural closure
+o_pf_e=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_e=zeros(l,lper);% output reduction by directly forced closure
+e_nc_e=zeros(l,lper);% emission reduction by natural closure
+e_pf_e=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_e=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j842');%original cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+c=xlsread(path,'23','k2:k842');%original cost without carbon tax and employment
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+oileme=zeros(l,lper);
+oilome=zeros(l,lper);
+oillme=zeros(l,lper);
+oilpfme=zeros(l,lper);
+oilomeb=zeros(l,lper);
+late=zeros(l,lper);
+lone=zeros(l,lper);
+procodee=zeros(l,lper);
+oil_d=[oil_d0,t,oil_d0(:,2),latlon,procode];
+for i=1:lper % 24-50 
+    pf(:,i)=op-pei.*cart(i,2);
+    spf(:,i)=c+oil_d(:,5).*cart(i,2);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*oil_d(:,2);% total environmental cost M CNY
+    oil_d=[oil_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if oil_d(j,6)<=i% no resources           
+            o_nc_e(j,i)=oil_d2(j,2);
+            e_nc_e(j,i)=oil_d2(j,1);
+            oil_d(j,7)=0;
+            oil_d(j,1)=0;
+            oil_d(j,2)=0;
+            oil_d(j,3)=0; 
+            oil_d(j,12)=0;             
+        end      
+        if pf(j,i)<=0 && oil_d(j,6)>i% stranded by carbon tax
+            o_pf_e(j,i)=oil_d2(j,2);
+            e_pf_e(j,i)=oil_d2(j,1);
+            oil_d(j,7)=0;
+            oil_d(j,1)=0;
+            oil_d(j,2)=0;
+            oil_d(j,3)=0;  
+            oil_d(j,12)=0;                        
+        end
+    end
+    oil_d_se=sortrows(oil_d,[7 -5 -4]);% sorted by status, emission intensity and cost
+    oileme(:,i)=oil_d_se(:,1);% emission matrix sorted by status, output and cost
+    oilome(:,i)=oil_d_se(:,2);% output matrix sorted by status, output and cost
+    oillme(:,i)=oil_d_se(:,3);% output matrix sorted by status, output and cost 
+    oilpfme(:,i)=oil_d_se(:,12);% output matrix sorted by status, output and cost    
+    late(:,i)=oil_d_se(:,9);
+    lone(:,i)=oil_d_se(:,10);
+    procodee(:,i)=oil_d_se(:,11);
+    oileme0=oileme;
+    oilome0=oilome;
+    oillme0=oillme;  
+    oilpfme0=oilpfme;      
+    oilomeb(:,i)=oil_d_se(:,8);
+    oil_r(oil_r>sum(oilomeb(:,i)))=sum(oilomeb(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(oilomeb(1:j,i))>=oil_r(i) && sum(oilomeb(1:(j-1),i))<oil_r(i) && oilome0(j,i)==1
+            oileme(1:(j-1),i)=0;
+            oilome(1:(j-1),i)=0;
+            oillme(1:(j-1),i)=0;   
+            oilpfme(1:(j-1),i)=0;               
+            oilome(j,i)=sum(oilomeb(1:j,i))-oil_r(i);
+            oileme(j,i)=oileme0(j,i)./oilomeb(j,i).*(sum(oilomeb(1:j,i))-oil_r(i));
+            oillme(j,i)=oillme0(j,i)./oilomeb(j,i).*(sum(oilomeb(1:j,i))-oil_r(i)); 
+            oilpfme(j,i)=oilpfme0(j,i)./oilomeb(j,i).*(sum(oilomeb(1:j,i))-oil_r(i));             
+        end
+    end  
+    for j=1:l
+        if oileme(j,i)==0 && oil_d_se(j,7)==1
+            o_fo_e(j,i)=oilomeb(j,i);
+            e_fo_e(j,i)=oileme0(j,i);
+        end
+        if oileme(j,i)~=0 && oileme(j,i)<oileme0(j,i)
+            o_fo_e(j,i)=(oil_r(i)-sum(oilomeb(1:j-1,i)));
+            e_fo_e(j,i)=oileme0(j,i)./oilomeb(j,i).*o_fo_e(j,i);
+        end
+    end
+end
+oil_se_ye=sum(oileme,1)/1000;% yearly emission GtCO2e
+oil_se_ye_cum=cumsum(oil_se_ye);% cumulative yearly emission
+oil_se_yo=sum(oilome,1);% yearly output Mt
+
+% output
+xlswrite(pathtca,oilomo,'oilomo','a1');
+xlswrite(pathtca,oilemo,'oilemo','a1');
+xlswrite(pathtca,oillmo,'oillmo','a1');
+xlswrite(pathtca,oilpfmo,'oilpfmo','a1');
+xlswrite(pathtca,oilome,'oilome','a1');
+xlswrite(pathtca,oileme,'oileme','a1');
+xlswrite(pathtca,oillme,'oillme','a1');
+xlswrite(pathtca,oilpfme,'oilpfme','a1');
+xlswrite(pathtca,lato,'lato','a1');
+xlswrite(pathtca,lono,'lono','a1');
+xlswrite(pathtca,late,'late','a1');
+xlswrite(pathtca,lone,'lone','a1');
+
+pceo=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodeo(j,i)==pceo(g,28)
+                pceo(g,i)=pceo(g,i)+oilemo(j,i);
+            end
+        end
+    end
+end
+tpceo=sum(pceo(:,1:27),2);
+
+pcee=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodee(j,i)==pcee(g,28)
+                pcee(g,i)=pcee(g,i)+oileme(j,i);
+            end
+        end
+    end
+end
+tpcee=sum(pcee(:,1:27),2);
+%% gas Stated Policies
+path=fullfile(current_path, 'gas.xlsx');
+path1=fullfile(current_path, 'futureproduction.xlsx');
+pathtcs=fullfile(current_path, 'gas\STEPS.xlsx');
+gas_d0=xlsread(path,'23','d2:i588');% emission/yr,gas output/yr, and workforce of each gas field
+latlon=xlsread(path,'23','b2:c588');
+procode=xlsread(path,'23','n2:n588');
+procode(isnan(procode))=32;
+l=size(gas_d0,1);
+t=ones(l,1);% 1 for sites with output
+gas_d=[gas_d0,t,gas_d0(:,2),latlon,procode];
+gas_d2=gas_d;
+gas_ew=xlsread(path1,'gas','k5:k31');% future gas production
+gas_ew2=gas_ew-41.188;% exclude gas that are not covered by inventory
+gas_r=-(gas_ew2-sum(gas_d(:,2)));%reduction in inventory needed
+per=2024:1:2050;% period span
+lper=size(per,2);
+pei=xlsread(path,'23','m2:m588');%emission inensity of production tCO2e/t
+% sorted by output
+o_nc_o=zeros(l,lper);% output reduction by natural closure
+o_pf_o=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_o=zeros(l,lper);% output reduction by directly forced closure
+e_nc_o=zeros(l,lper);% emission reduction by natural closure
+e_pf_o=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_o=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j588');%original environmental cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+c=xlsread(path,'23','k2:k588');%original cost without carbon tax and employment
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+gasemo=zeros(l,lper);
+gasomo=zeros(l,lper);
+gaslmo=zeros(l,lper);
+gaspfmo=zeros(l,lper);
+gasomob=zeros(l,lper);
+lato=zeros(l,lper);
+lono=zeros(l,lper);
+procodeo=zeros(l,lper);
+for i=1:lper % 24-50
+    pf(:,i)=op-pei.*cart(i,1);
+    spf(:,i)=c+gas_d(:,5).*cart(i,1);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*gas_d(:,2);% total cost B CNY
+    gas_d=[gas_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if gas_d(j,6)<=i% no resources
+            o_nc_o(j,i)=gas_d2(j,2);
+            e_nc_o(j,i)=gas_d2(j,1);
+            gas_d(j,7)=0;
+            gas_d(j,1)=0;
+            gas_d(j,2)=0;
+            gas_d(j,3)=0;    
+            gas_d(j,12)=0;                
+        end
+        if pf(j,i)<=0 && gas_d(j,6)>i% stranded by carbon tax
+            o_pf_o(j,i)=gas_d2(j,2);
+            e_pf_o(j,i)=gas_d2(j,1);
+            gas_d(j,7)=0;
+            gas_d(j,1)=0;
+            gas_d(j,2)=0;
+            gas_d(j,3)=0;    
+            gas_d(j,12)=0;                            
+        end
+    end
+    gas_d_so=sortrows(gas_d,[7 8 -4]);% sorted by status, output and cost
+    gasemo(:,i)=gas_d_so(:,1);% emission matrix sorted by status, output and cost
+    gasomo(:,i)=gas_d_so(:,2);% output matrix sorted by status, output and cost
+    gaslmo(:,i)=gas_d_so(:,3);% output matrix sorted by status, output and cost   
+    gaspfmo(:,i)=gas_d_so(:,12);% output matrix sorted by status, output and cost      
+    lato(:,i)=gas_d_so(:,9);
+    lono(:,i)=gas_d_so(:,10);
+    procodeo(:,i)=gas_d_so(:,11);
+    gasemo0=gasemo;
+    gasomo0=gasomo;
+    gaslmo0=gaslmo;  
+    gaspfmo0=gaspfmo;  
+    gasomob(:,i)=gas_d_so(:,8);
+    gas_r(gas_r>sum(gasomob(:,i)))=sum(gasomob(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(gasomob(1:j,i))>=gas_r(i) && sum(gasomob(1:(j-1),i))<gas_r(i) && gasomo0(j,i)==1
+            gasemo(1:(j-1),i)=0;
+            gasomo(1:(j-1),i)=0;
+            gaslmo(1:(j-1),i)=0;
+            gaspfmo(1:(j-1),i)=0;           
+            gasomo(j,i)=sum(gasomob(1:j,i))-gas_r(i);
+            gasemo(j,i)=gasemo0(j,i)./gasomob(j,i).*(sum(gasomob(1:j,i))-gas_r(i));
+            gaslmo(j,i)=gaslmo0(j,i)./gasomob(j,i).*(sum(gasomob(1:j,i))-gas_r(i));
+            gaspfmo(j,i)=gaspfmo0(j,i)./gasomob(j,i).*(sum(gasomob(1:j,i))-gas_r(i));           
+        end
+    end
+    for j=1:l
+        if gasemo(j,i)==0 && gas_d_so(j,7)==1
+            o_fo_o(j,i)=gasomob(j,i);
+            e_fo_o(j,i)=gasemo0(j,i);
+        end
+        if gasemo(j,i)~=0 && gasemo(j,i)<gasemo0(j,i)
+            o_fo_o(j,i)=(gas_r(i)-sum(gasomob(1:j-1,i)));
+            e_fo_o(j,i)=gasemo0(j,i)./gasomob(j,i).*o_fo_o(j,i);
+        end
+    end
+end
+gas_so_ye=sum(gasemo,1)/1000;% yearly emissionGtCO2e
+gas_so_yo=sum(gasomo,1);% yearly output Mt
+% sorted by emission intensity
+o_nc_e=zeros(l,lper);% output reduction by natural closure
+o_pf_e=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_e=zeros(l,lper);% output reduction by directly forced closure
+e_nc_e=zeros(l,lper);% emission reduction by natural closure
+e_pf_e=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_e=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j588');%original cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+c=xlsread(path,'23','k2:k588');%original cost without carbon tax and employment
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+gaseme=zeros(l,lper);
+gasome=zeros(l,lper);
+gaslme=zeros(l,lper);
+gaspfme=zeros(l,lper);
+gasomeb=zeros(l,lper);
+late=zeros(l,lper);
+lone=zeros(l,lper);
+procodee=zeros(l,lper);
+gas_d=[gas_d0,t,gas_d0(:,2),latlon,procode];
+for i=1:lper % 24-50
+    pf(:,i)=op-pei.*cart(i,1);
+    spf(:,i)=c+gas_d(:,5).*cart(i,1);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*gas_d(:,2);% total environmental cost B CNY
+    gas_d=[gas_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if gas_d(j,6)<=i% no resources
+            o_nc_e(j,i)=gas_d2(j,2);
+            e_nc_e(j,i)=gas_d2(j,1);
+            gas_d(j,7)=0;
+            gas_d(j,1)=0;
+            gas_d(j,2)=0;
+            gas_d(j,3)=0;    
+            gas_d(j,12)=0;               
+        end
+        if pf(j,i)<=0 && gas_d(j,6)>i% stranded by carbon tax
+            o_pf_e(j,i)=gas_d2(j,2);
+            e_pf_e(j,i)=gas_d2(j,1);
+            gas_d(j,7)=0;
+            gas_d(j,1)=0;
+            gas_d(j,2)=0;
+            gas_d(j,3)=0;   
+            gas_d(j,12)=0;                           
+        end
+    end   
+    gas_d_se=sortrows(gas_d,[7 -5 -4]);% sorted by status, emission intensity and cost
+    gaseme(:,i)=gas_d_se(:,1);% emission matrix sorted by status, output and cost
+    gasome(:,i)=gas_d_se(:,2);% output matrix sorted by status, output and cost
+    gaslme(:,i)=gas_d_se(:,3);% output matrix sorted by status, output and cost   
+    gaspfme(:,i)=gas_d_se(:,12);% output matrix sorted by status, output and cost      
+    late(:,i)=gas_d_se(:,9);
+    lone(:,i)=gas_d_se(:,10);
+    procodee(:,i)=gas_d_se(:,11);
+    gaseme0=gaseme;
+    gasome0=gasome;
+    gaslme0=gaslme;  
+    gaspfme0=gaspfme;      
+    gasomeb(:,i)=gas_d_se(:,8);
+    gas_r(gas_r>sum(gasomeb(:,i)))=sum(gasomeb(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(gasomeb(1:j,i))>=gas_r(i) && sum(gasomeb(1:(j-1),i))<gas_r(i) && gasome0(j,i)==1
+            gaseme(1:(j-1),i)=0;
+            gasome(1:(j-1),i)=0;
+            gaslme(1:(j-1),i)=0;  
+            gaspfme(1:(j-1),i)=0;             
+            gasome(j,i)=sum(gasomeb(1:j,i))-gas_r(i);
+            gaseme(j,i)=gaseme0(j,i)./gasomeb(j,i).*(sum(gasomeb(1:j,i))-gas_r(i));
+            gaspfme(j,i)=gaspfme0(j,i)./gasomeb(j,i).*(sum(gasomeb(1:j,i))-gas_r(i));             
+        end
+    end
+    for j=1:l
+        if gaseme(j,i)==0 && gas_d_se(j,7)==1
+            o_fo_e(j,i)=gasomeb(j,i);
+            e_fo_e(j,i)=gaseme0(j,i);
+        end
+        if gaseme(j,i)~=0 && gaseme(j,i)<gaseme0(j,i)
+            o_fo_e(j,i)=(gas_r(i)-sum(gasomeb(1:j-1,i)));
+            e_fo_e(j,i)=gaseme0(j,i)./gasomeb(j,i).*o_fo_e(j,i);
+        end
+    end
+end
+gas_se_ye=sum(gaseme,1)/1000;% yearly emission GtCO2e
+gas_se_yo=sum(gasome,1);% yearly output Mt
+
+% output
+xlswrite(pathtcs,gasomo,'gasomo','a1');
+xlswrite(pathtcs,gasemo,'gasemo','a1');
+xlswrite(pathtcs,gaslmo,'gaslmo','a1');
+xlswrite(pathtcs,gaspfmo,'gaspfmo','a1');
+xlswrite(pathtcs,gasome,'gasome','a1');
+xlswrite(pathtcs,gaseme,'gaseme','a1');
+xlswrite(pathtcs,gaslme,'gaslme','a1');
+xlswrite(pathtcs,gaspfme,'gaspfme','a1');
+xlswrite(pathtcs,lato,'lato','a1');
+xlswrite(pathtcs,lono,'lono','a1');
+xlswrite(pathtcs,late,'late','a1');
+xlswrite(pathtcs,lone,'lone','a1');
+
+pceo=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodeo(j,i)==pceo(g,28)
+                pceo(g,i)=pceo(g,i)+gasemo(j,i);
+            end
+        end
+    end
+end
+tpceo=sum(pceo(:,1:27),2);
+
+pcee=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodee(j,i)==pcee(g,28)
+                pcee(g,i)=pcee(g,i)+gaseme(j,i);
+            end
+        end
+    end
+end
+tpcee=sum(pcee(:,1:27),2);
+%% gas Announced Pledges
+path=fullfile(current_path, 'gas.xlsx');
+path1=fullfile(current_path, 'futureproduction.xlsx');
+pathtca=fullfile(current_path, 'gas\APS.xlsx');
+gas_d0=xlsread(path,'23','d2:i588');% emission/yr,gas output/yr, and workforce of each gas field
+l=size(gas_d0,1);
+t=ones(l,1);% 1 for sites with output
+gas_d=[gas_d0,t,gas_d0(:,2),latlon,procode];
+gas_d2=gas_d;
+gas_ew=xlsread(path1,'gas','l5:l31');% future gas production
+gas_ew2=gas_ew-41.188;% exclude gas that are not covered by inventory
+gas_r=-(gas_ew2-sum(gas_d(:,2)));%reduction in inventory needed
+per=2024:1:2050;% period span
+lper=size(per,2);
+pei=xlsread(path,'23','m2:m588');%emission inensity of production tCO2e/t
+% sorted by output
+o_nc_o=zeros(l,lper);% output reduction by natural closure
+o_pf_o=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_o=zeros(l,lper);% output reduction by directly forced closure
+e_nc_o=zeros(l,lper);% emission reduction by natural closure
+e_pf_o=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_o=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j588');%original environmental cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+gasemo=zeros(l,lper);
+gasomo=zeros(l,lper);
+gaslmo=zeros(l,lper);
+gaspfmo=zeros(l,lper);
+gasomob=zeros(l,lper);
+lato=zeros(l,lper);
+lono=zeros(l,lper);
+procodeo=zeros(l,lper);
+for i=1:lper % 24-50 
+    pf(:,i)=op-pei.*cart(i,2);
+    spf(:,i)=c+gas_d(:,5).*cart(i,2);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*gas_d(:,2);% total environmental cost B CNY
+    gas_d=[gas_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if gas_d(j,6)<=i% no resources
+            o_nc_o(j,i)=gas_d2(j,2);
+            e_nc_o(j,i)=gas_d2(j,1);
+            gas_d(j,7)=0;
+            gas_d(j,1)=0;
+            gas_d(j,2)=0;
+            gas_d(j,3)=0;    
+            gas_d(j,12)=0;    
+        end       
+        if pf(j,i)<=0 && gas_d(j,6)>i% stranded by carbon tax
+            o_pf_o(j,i)=gas_d2(j,2);
+            e_pf_o(j,i)=gas_d2(j,1);
+            gas_d(j,7)=0;
+            gas_d(j,1)=0;
+            gas_d(j,2)=0;
+            gas_d(j,3)=0;      
+            gas_d(j,12)=0;                
+        end
+    end
+    gas_d_so=sortrows(gas_d,[7 8 -4]);% sorted by status, output and cost
+    gasemo(:,i)=gas_d_so(:,1);% emission matrix sorted by status, output and cost
+    gasomo(:,i)=gas_d_so(:,2);% output matrix sorted by status, output and cost
+    gaslmo(:,i)=gas_d_so(:,3);% output matrix sorted by status, output and cost    
+    gaspfmo(:,i)=gas_d_so(:,12);% output matrix sorted by status, output and cost       
+    lato(:,i)=gas_d_so(:,9);
+    lono(:,i)=gas_d_so(:,10);
+    procodeo(:,i)=gas_d_so(:,11);
+    gasemo0=gasemo;
+    gasomo0=gasomo;
+    gaslmo0=gaslmo;   
+    gaspfmo0=gaspfmo;       
+    gasomob(:,i)=gas_d_so(:,8);
+    gas_r(gas_r>sum(gasomob(:,i)))=sum(gasomob(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(gasomob(1:j,i))>=gas_r(i) && sum(gasomob(1:(j-1),i))<gas_r(i) && gasomo0(j,i)==1
+            gasemo(1:(j-1),i)=0;
+            gasomo(1:(j-1),i)=0;
+            gaslmo(1:(j-1),i)=0;       
+            gaspfmo(1:(j-1),i)=0;                  
+            gasomo(j,i)=sum(gasomob(1:j,i))-gas_r(i);
+            gasemo(j,i)=gasemo0(j,i)./gasomob(j,i).*(sum(gasomob(1:j,i))-gas_r(i));
+            gaslmo(j,i)=gaslmo0(j,i)./gasomob(j,i).*(sum(gasomob(1:j,i))-gas_r(i));  
+            gaspfmo(j,i)=gaspfmo0(j,i)./gasomob(j,i).*(sum(gasomob(1:j,i))-gas_r(i));             
+        end
+    end
+    
+    for j=1:l
+        if gasemo(j,i)==0 && gas_d_so(j,7)==1
+            o_fo_o(j,i)=gasomob(j,i);
+            e_fo_o(j,i)=gasemo0(j,i);
+        end
+        if gasemo(j,i)~=0 && gasemo(j,i)<gasemo0(j,i)
+            o_fo_o(j,i)=(gas_r(i)-sum(gasomob(1:j-1,i)));
+            e_fo_o(j,i)=gasemo0(j,i)./gasomob(j,i).*o_fo_o(j,i);
+        end
+    end
+end
+gas_so_ye=sum(gasemo,1)/1000;% yearly emissionGtCO2e
+gas_so_ye_cum=cumsum(gas_so_ye);% cumulative yearly emission
+gas_so_yo=sum(gasomo,1);% yearly output Mt
+% sorted by emission intensity
+o_nc_e=zeros(l,lper);% output reduction by natural closure
+o_pf_e=zeros(l,lper);% output reduction by carbon tax-driven closure
+o_fo_e=zeros(l,lper);% output reduction by directly forced closure
+e_nc_e=zeros(l,lper);% emission reduction by natural closure
+e_pf_e=zeros(l,lper);% emission reduction by carbon tax-driven closure
+e_fo_e=zeros(l,lper);% emission reduction by directly forced closure
+op=xlsread(path,'23','j2:j588');%original cost without carbon tax
+cart=xlsread(path1,'carbontax','j5:k31');%carbon tax 2030-2050
+pf=zeros(l,lper);% output reduction by directly forced closure
+spf=zeros(l,lper);% environmental cost with carbon tax for all emission
+tpf=zeros(l,lper);
+gaseme=zeros(l,lper);
+gasome=zeros(l,lper);
+gaslme=zeros(l,lper);
+gaspfme=zeros(l,lper);
+gasomeb=zeros(l,lper);
+late=zeros(l,lper);
+lone=zeros(l,lper);
+procodee=zeros(l,lper);
+gas_d=[gas_d0,t,gas_d0(:,2),latlon,procode];
+for i=1:lper % 24-50    
+    pf(:,i)=op-pei.*cart(i,2);
+    spf(:,i)=c+gas_d(:,5).*cart(i,2);%environmental cost considering all emissions
+    tpf(:,i)=spf(:,i).*gas_d(:,2);% total environmental cost B CNY
+    gas_d=[gas_d2, tpf(:,i)];% 12 col
+    for j=1:l
+        if gas_d(j,6)<=i% no resources
+            o_nc_e(j,i)=gas_d2(j,2);
+            e_nc_e(j,i)=gas_d2(j,1);
+            gas_d(j,7)=0;
+            gas_d(j,1)=0;
+            gas_d(j,2)=0;
+            gas_d(j,3)=0; 
+            gas_d(j,12)=0;             
+        end
+        if pf(j,i)<=0 && gas_d(j,6)>i% stranded by carbon tax
+            o_pf_e(j,i)=gas_d2(j,2);
+            e_pf_e(j,i)=gas_d2(j,1);
+            gas_d(j,7)=0;
+            gas_d(j,1)=0;
+            gas_d(j,2)=0;
+            gas_d(j,3)=0; 
+            gas_d(j,12)=0;             
+        end
+    end   
+    gas_d_se=sortrows(gas_d,[7 -5 -4]);% sorted by status, emission intensity and cost
+    gaseme(:,i)=gas_d_se(:,1);% emission matrix sorted by status, output and cost
+    gasome(:,i)=gas_d_se(:,2);% output matrix sorted by status, output and cost
+    gaslme(:,i)=gas_d_se(:,3);% output matrix sorted by status, output and cost 
+    gaspfme(:,i)=gas_d_se(:,12);% output matrix sorted by status, output and cost     
+    late(:,i)=gas_d_se(:,9);
+    lone(:,i)=gas_d_se(:,10);
+    procodee(:,i)=gas_d_se(:,11);
+    gaseme0=gaseme;
+    gasome0=gasome;
+    gaslme0=gaslme;  
+    gaspfme0=gaspfme;     
+    gasomeb(:,i)=gas_d_se(:,8);
+    gas_r(gas_r>sum(gasomeb(:,i)))=sum(gasomeb(:,i));% reduction cannot beyond inventory
+    for j=1:l
+        if sum(gasomeb(1:j,i))>=gas_r(i) && sum(gasomeb(1:(j-1),i))<gas_r(i) && gasome0(j,i)==1
+            gaseme(1:(j-1),i)=0;
+            gasome(1:(j-1),i)=0;
+            gaslme(1:(j-1),i)=0;    
+            gaspfme(1:(j-1),i)=0;    
+            gasome(j,i)=sum(gasomeb(1:j,i))-gas_r(i);
+            gaseme(j,i)=gaseme0(j,i)./gasomeb(j,i).*(sum(gasomeb(1:j,i))-gas_r(i));
+            gaslme(j,i)=gaslme0(j,i)./gasomeb(j,i).*(sum(gasomeb(1:j,i))-gas_r(i));  
+            gaspfme(j,i)=gaspfme0(j,i)./gasomeb(j,i).*(sum(gasomeb(1:j,i))-gas_r(i));              
+        end
+    end
+    
+    for j=1:l
+        if gaseme(j,i)==0 && gas_d_se(j,7)==1
+            o_fo_e(j,i)=gasomeb(j,i);
+            e_fo_e(j,i)=gaseme0(j,i);
+        end
+        if gaseme(j,i)~=0 && gaseme(j,i)<gaseme0(j,i)
+            o_fo_e(j,i)=(gas_r(i)-sum(gasomeb(1:j-1,i)));
+            e_fo_e(j,i)=gaseme0(j,i)./gasomeb(j,i).*o_fo_e(j,i);
+        end
+    end
+end
+gas_se_ye=sum(gaseme,1)/1000;% yearly emission GtCO2e
+gas_se_ye_cum=cumsum(gas_se_ye);% cumulative yearly emission
+gas_se_yo=sum(gasome,1);% yearly output Mt
+
+diffoe_cs=gas_so_ye_cum(1,size(gas_so_ye_cum,2))-gas_se_ye_cum(1,size(gas_se_ye_cum,2));
+% output
+xlswrite(pathtca,gasomo,'gasomo','a1');
+xlswrite(pathtca,gasemo,'gasemo','a1');
+xlswrite(pathtca,gaslmo,'gaslmo','a1');
+xlswrite(pathtca,gaspfmo,'gaspfmo','a1');
+xlswrite(pathtca,gasome,'gasome','a1');
+xlswrite(pathtca,gaseme,'gaseme','a1');
+xlswrite(pathtca,gaslme,'gaslme','a1');
+xlswrite(pathtca,gaspfme,'gaspfme','a1');
+xlswrite(pathtca,lato,'lato','a1');
+xlswrite(pathtca,lono,'lono','a1');
+xlswrite(pathtca,late,'late','a1');
+xlswrite(pathtca,lone,'lone','a1');
+
+pceo=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodeo(j,i)==pceo(g,28)
+                pceo(g,i)=pceo(g,i)+gasemo(j,i);
+            end
+        end
+    end
+end
+tpceo=sum(pceo(:,1:27),2);
+
+pcee=[zeros(31,27),(1:1:31)'];
+for i=1:27
+    for j=1:l
+        for g=1:31
+            if procodee(j,i)==pcee(g,28)
+                pcee(g,i)=pcee(g,i)+gaseme(j,i);
+            end
+        end
+    end
+end
+tpcee=sum(pcee(:,1:27),2);
+%% figures
+% figure 1 was drawn using ArcMap 10.8 with the information on emissions from
+% fossil fuels
+% figure 2a 
+
+% ==============================
+% Global configuration (Core adjustment: Ultra-narrow legend)
+% ==============================
+global_font_size = 18;  % Further reduce font size to fit ultra-narrow legend
+global_font_name = 'Microsoft YaHei'; 
+marker_size = 10; % Further reduce marker size
+% Legend position and size: Width reduced from 0.25 to 0.18, height 0.07, shift right horizontally to center the legend
+legend_pos = [0.4, 0.5, 0.18, 0.07];
+legend_border_width = 0.5; % Ultra-thin border
+
+% Optimize rendering (Keep only valid properties)
+set(groot, 'DefaultFigureRenderer', 'opengl');
+set(groot, 'DefaultFigureRendererMode', 'manual');
+set(groot, 'DefaultFigureColorMap', []); % Disable colormap
+
+% Figure size
+set(groot, 'DefaultFigurePosition', [100, 100, 1200, 3200]);
+set(groot, 'DefaultFigurePaperPosition', [0, 0, 20, 26]);
+set(groot, 'DefaultFigurePaperPositionMode', 'manual');
+set(groot, 'DefaultFigureInvertHardcopy', 'off');
+
+% Font settings
+set(groot, 'DefaultAxesFontName', global_font_name);
+set(groot, 'DefaultTextFontName', global_font_name);
+set(groot, 'DefaultLegendFontName', global_font_name);
+set(groot, 'DefaultAxesFontSize', global_font_size);
+set(groot, 'DefaultTextFontSize', global_font_size);
+set(groot, 'DefaultLegendFontSize', global_font_size);
+
+% Define output folder (for consistency, no actual saving)
+excel_file=fullfile(current_path, 'figure2a.xlsx');
+output_folder = current_path;
+% Create output folder if not exists (optional, keep for data integrity)
+if ~exist(output_folder, 'dir')
+    mkdir(output_folder);
+end
+
+% ==============================
+% Fuel types/labels/colors (Restore original colors)
+% ==============================
+fuel_types = {'coal', 'oil', 'gas'};       
+fuel_labels = {'coal', 'oil', 'gas'};     % Lowercase
+% Original color values (Requested by user)
+fuel_colors = [239, 167, 141; 128, 183, 220; 245, 217, 140] / 255; 
+colors_dict = containers.Map(fuel_types, num2cell(fuel_colors, 2));
+
+% ==============================
+% Data loading (Simulated data as fallback)
+% ==============================
+if exist(excel_file, 'file')
+    emissions_data = readtable(excel_file, 'Sheet', 'Emission');
+else
+    % Simulated data: Prevent error when file does not exist
+    rng(1); % Fixed random seed for reproducibility
+    n_rows = 10;
+    fuel_type_idx = randi(3, n_rows, 1);
+    fuel_type_cell = cell(n_rows, 1);
+    for i = 1:n_rows
+        fuel_type_cell{i} = fuel_types{fuel_type_idx(i)};
+    end
+    emissions_data = table(rand(n_rows,1), rand(n_rows,1), rand(n_rows,1), rand(n_rows,1), fuel_type_cell, ...
+        'VariableNames', {'Emissions', 'Cumulative_percentage_in_emissions', 'Cumulative_percentage_in_output', 'Output', 'type'});
+    fprintf('Warning: Excel file not found, using simulated data.\n');
+end
+
+% Validate column names
+required_cols = {'Emissions', 'Cumulative_percentage_in_emissions', 'Cumulative_percentage_in_output', 'Output', 'type'};
+missing_cols = setdiff(required_cols, emissions_data.Properties.VariableNames);
+if ~isempty(missing_cols)
+    error('Missing required columns: %s', strjoin(missing_cols, ', '));
+end
+
+% ==============================
+% Generate plot
+% ==============================
+fprintf('\nGenerating emissions plot...\n');
+plot_dual_ybar_nonuniform_matlab(...
+    emissions_data, ...
+    'Emissions', ...
+    'Cumulative_percentage_in_emissions', ...
+    'Cumulative_percentage_in_output', ...
+    'Output', ...
+    'type', ...
+    'Infrastructure emissions (MtCO_2e)', ...
+    [0, 80], ...
+    10, ...
+    colors_dict, ...
+    fullfile(output_folder, 'figure1.3emissions_dual_yaxis.tiff'), ...
+    [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], ...
+    {'No.17', 'No.42', 'No.80', 'No.131', 'No.206', 'No.317', 'No.477', 'No.714', 'No.1042', 'No.2693'}, ...
+    global_font_size, ...
+    global_font_name, ...
+    marker_size, ...
+    legend_pos, ...
+    legend_border_width, ... % Pass ultra-thin border parameter
+    fuel_types, ...
+    fuel_labels, ...
+    fuel_colors ...
+);
+fprintf('Emissions plot generated successfully (no saving).\n');
+
+% figure 2b output and emission intensity
+figure;
+path1=fullfile(current_path, 'coal.xlsx');
+coal_d0=xlsread(path1,'23','x2:aa1266');
+path2=fullfile(current_path, 'oil.xlsx');
+oil_d0=xlsread(path2,'23','o2:r842');% emission/yr,oil output/yr, and workforce of each oil field
+path3=fullfile(current_path, 'gas.xlsx');
+gas_d0=xlsread(path3,'23','o2:r588');% emission/yr,gas output/yr, and workforce of each gas field
+semilogx(coal_d0(:,4),coal_d0(:,1),'o','MarkerEdgeColor',[239, 167, 141]./255,'Markersize',15,'LineWidth',2)
+xlim([0 1082]);
+ylim([55 161]);
+set(gca,'FontSize',50);
+xlabel('Site scale (PJ/yr)','FontSize',50);
+ylabel('tCO_2e/TJ','FontSize',50);
+hold on
+semilogx(oil_d0(:,4),oil_d0(:,1),'o','MarkerEdgeColor',[128, 183, 220]./255,'Markersize',15,'LineWidth',2)
+hold on
+semilogx(gas_d0(:,4),gas_d0(:,1),'o','MarkerEdgeColor',[245, 217, 140]./255,'Markersize',15,'LineWidth',2)
+legend({'coal','oil','gas'},'Location','northwest', 'Orientation', 'horizontal')
+xticks([0 10^-3 10^-2 10^-1 10^0 10^1 10^2 1082])
+xticklabels({'0','10^-^3','10^-^2','10^-^1','10^0','10^1','10^2','1082'})
+
+% figure 3
+% Set global font to Arial with font size 40
+set(groot, 'defaultAxesFontName', 'Arial');
+set(groot, 'defaultTextFontName', 'Arial');
+set(groot, 'defaultAxesFontSize', 40);
+set(groot, 'defaultTextFontSize', 40);
+
+% Define fossil fuel colors (per provided RGB values)
+coal_color = [0.937255, 0.654902, 0.552941];   % Coal (coral/terracotta)
+oil_color = [0.501961, 0.717647, 0.862745];    % Oil (sky blue)
+gas_color = [0.960784, 0.850980, 0.549020];    % Gas (golden yellow)
+
+% Define line color for cumulative emission reduction
+steps_reduction_color = [0.509804, 0.000000, 0.207843]; % Deep magenta (STEPS)
+aps_reduction_color = [0.509804, 0.000000, 0.207843];  % Deep magenta (APS)
+
+% Path to the Excel data file
+data_file=fullfile(current_path, 'figure3.xlsx');
+
+% Get all worksheet names from the Excel file
+[~, sheet_names] = xlsfinfo(data_file);
+
+% Find worksheets containing STEPS/APS keywords (case-insensitive match)
+steps_sheet = '';
+aps_sheet = '';
+
+for i = 1:length(sheet_names)
+    if contains(sheet_names{i}, 'STEPS', 'IgnoreCase', true)
+        steps_sheet = sheet_names{i};
+    elseif contains(sheet_names{i}, 'APS', 'IgnoreCase', true)
+        aps_sheet = sheet_names{i};
+    end
+end
+
+% Fallback: Use the first two worksheets if STEPS/APS sheets are not found
+if isempty(steps_sheet) || isempty(aps_sheet)
+    if length(sheet_names) >= 2
+        steps_sheet = sheet_names{1};
+        aps_sheet = sheet_names{2};
+        warning('Using the first two worksheets for STEPS and APS scenarios (target sheets not found)');
+    else
+        error('The Excel file must contain at least two worksheets');
+    end
+end
+
+% Read data (remove VariableNamingRule for MATLAB 2018a compatibility)
+steps_data = readtable(data_file, 'Sheet', steps_sheet);
+aps_data = readtable(data_file, 'Sheet', aps_sheet);
+
+% Generate plots for both scenarios
+create_emission_plot(steps_data, 'STEPS', coal_color, oil_color, gas_color, steps_reduction_color);
+create_emission_plot(aps_data, 'APS', coal_color, oil_color, gas_color, aps_reduction_color);
+
+% figure 4
+% employment
+path1=fullfile(current_path, 'coal\STEPS.xlsx');
+employmentcoalstepsscale=xlsread(path1,'labordiff','a3:aa3');
+employmentcoalstepsemission=xlsread(path1,'labordiff','a4:aa4');
+path2=fullfile(current_path, 'coal\APS.xlsx');
+employmentcoalapsscale=xlsread(path2,'labordiff','a3:aa3');
+employmentcoalapsemission=xlsread(path2,'labordiff','a4:aa4');
+
+path1=fullfile(current_path, 'oil\STEPS.xlsx');
+employmentoilstepsscale=xlsread(path1,'labordiff','a3:aa3');
+employmentoilstepsemission=xlsread(path1,'labordiff','a4:aa4');
+path2=fullfile(current_path, 'oil\APS.xlsx');
+employmentoilapsscale=xlsread(path2,'labordiff','a3:aa3');
+employmentoilapsemission=xlsread(path2,'labordiff','a4:aa4');
+
+path1=fullfile(current_path, 'gas\STEPS.xlsx');
+employmentgasstepsscale=xlsread(path1,'labordiff','a3:aa3');
+employmentgasstepsemission=xlsread(path1,'labordiff','a4:aa4');
+path2=fullfile(current_path, 'gas\APS.xlsx');
+employmentgasapsscale=xlsread(path2,'labordiff','a3:aa3');
+employmentgasapsemission=xlsread(path2,'labordiff','a4:aa4');
+
+employmentstepsscale=(employmentcoalstepsscale+employmentoilstepsscale+employmentgasstepsscale)/1000000;
+employmentstepsemission=(employmentcoalstepsemission+employmentoilstepsemission+employmentgasstepsemission)/1000000;
+employmentapsscale=(employmentcoalapsscale+employmentoilapsscale+employmentgasapsscale)/1000000;
+employmentapsemission=(employmentcoalapsemission+employmentoilapsemission+employmentgasapsemission)/1000000;
+
+x=1:2;
+y = [sum(employmentstepsemission)-sum(employmentstepsscale) sum(employmentapsemission)-sum(employmentapsscale)];
+f=figure;
+set(f, 'Units', 'Normalized', 'OuterPosition', [0 0 .5 1]);
+bar(x,y,'Facecolor',[111 111 111]/256, 'BarWidth', .6)
+ylabel('Employment difference (Million)');
+set(gca,'Xticklabel',{'STEPS' 'APS'});
+set(gca,'FontSize',40);
+
+% cost
+path1=fullfile(current_path, 'coal\STEPS.xlsx');
+costcoalstepsscale=xlsread(path1,'costdiff','a5:aa5');
+costcoalstepsemission=xlsread(path1,'costdiff','a6:aa6');
+path2=fullfile(current_path, 'coal\APS.xlsx');
+costcoalapsscale=xlsread(path2,'costdiff','a5:aa5');
+costcoalapsemission=xlsread(path2,'costdiff','a6:aa6');
+
+path1=fullfile(current_path, 'oil\STEPS.xlsx');
+costoilstepsscale=xlsread(path1,'costdiff','a5:aa5');
+costoilstepsemission=xlsread(path1,'costdiff','a6:aa6');
+path2=fullfile(current_path, 'oil\APS.xlsx');
+costoilapsscale=xlsread(path2,'costdiff','a5:aa5');
+costoilapsemission=xlsread(path2,'costdiff','a6:aa6');
+
+path1=fullfile(current_path, 'gas\STEPS.xlsx');
+costgasstepsscale=xlsread(path1,'costdiff','a5:aa5');
+costgasstepsemission=xlsread(path1,'costdiff','a6:aa6');
+path2=fullfile(current_path, 'gas\APS.xlsx');
+costgasapsscale=xlsread(path2,'costdiff','a5:aa5');
+costgasapsemission=xlsread(path2,'costdiff','a6:aa6');
+
+path1=fullfile(current_path, 'coal\STEPS.xlsx');
+npv=xlsread(path1,'costdiff','a2:aa2');
+coststepsscale=(costcoalstepsscale+costoilstepsscale+costgasstepsscale)./npv;
+coststepsemission=(costcoalstepsemission+costoilstepsemission+costgasstepsemission)./npv;
+costapsscale=(costcoalapsscale+costoilapsscale+costgasapsscale)./npv;
+costapsemission=(costcoalapsemission+costoilapsemission+costgasapsemission)./npv;
+
+x=1:2;
+y = [245 507];
+f=figure;
+set(f, 'Units', 'Normalized', 'OuterPosition', [0 0 .5 1]);
+bar(x,y,'Facecolor',[109 101 163]/256, 'BarWidth', .6)
+ylabel('Cost difference (Billion CNY)');
+set(gca,'Xticklabel',{'STEPS' 'APS'});
+set(gca,'FontSize',40);
+toc
+
+% ==============================
+% Core plotting function (Ultra-narrow legend + Optimized internal spacing)
+% ==============================
+function plot_dual_ybar_nonuniform_matlab(data, x_col, main_y_col, sec_y_col, width_col, ...
+                                         type_col, x_label, x_lim, x_ticks, colors, output_file, ...
+                                         custom_sec_ticks, no_labels, font_size, font_name, marker_size, legend_pos, legend_border_width, ...
+                                         fuel_types, fuel_labels, fuel_colors)
+    
+    % Sort data
+    [sorted_vals, sort_idx] = sort(data.(x_col), 'descend');
+    data_sorted = data(sort_idx, :);
+    n_rows = height(data_sorted);
+    
+    % Calculate bar heights (Percentage)
+    total_width = sum(data_sorted.(width_col));
+    bar_heights = data_sorted.(width_col) / total_width * 100;
+    
+    % Calculate bar positions
+    cumulative_pos = 0;
+    bar_positions = zeros(n_rows, 1);
+    for i = 1:n_rows
+        bar_positions(i) = cumulative_pos + bar_heights(i) / 2;
+        cumulative_pos = cumulative_pos + bar_heights(i);
+    end
+
+    % Data cleaning function
+    function numeric_data = clean_percentage_data(series)
+        if iscell(series)
+            cleaned = strrep(series, '%', '');
+            cleaned = strrep(cleaned, ' ', '');
+            numeric_data = str2double(cleaned);
+        else
+            numeric_data = series;
+        end
+        numeric_data(isnan(numeric_data)) = 0;
+        if max(numeric_data) <= 1
+            numeric_data = numeric_data * 100;
+        end
+    end 
+
+    % Clean Y-axis data
+    main_y = clean_percentage_data(data_sorted.(main_y_col));
+    sec_y = clean_percentage_data(data_sorted.(sec_y_col));
+    
+    % Create figure (White background)
+    fig = figure('Position', [100, 100, 1200, 3200]);
+    set(fig, 'Color', [1,1,1]);
+    set(fig, 'InvertHardcopy', 'off');
+    set(fig, 'DefaultAxesFontSize', font_size);
+    set(fig, 'DefaultAxesFontName', font_name);
+
+    % Main axes
+    ax1 = axes('Parent', fig);
+    set(ax1, 'XAxisLocation', 'top');
+    set(ax1, 'YDir', 'reverse');
+    set(ax1, 'Box', 'off');
+    set(ax1, 'TickDir', 'out');
+    set(ax1, 'TickLength', [0.01, 0.01]);
+    set(ax1, 'Position', [0.12, 0.05, 0.7, 0.8]);
+    set(ax1, 'FontSize', font_size);
+    set(ax1, 'FontName', font_name);
+    set(ax1, 'Color', 'none');
+    hold(ax1, 'on');
+    
+    % Process fuel types (Lowercase)
+    type_data = data_sorted.(type_col);
+    if iscategorical(type_data)
+        type_data = lower(char(cellstr(type_data)));
+    elseif iscell(type_data)
+        type_data = lower(cellfun(@char, type_data, 'UniformOutput', false));
+    else
+        type_data = lower(type_data);
+    end
+    
+    % Plot horizontal bar chart (Original colors, no invalid properties)
+    for i = 1:n_rows
+        fuel_type = type_data{i};
+        fuel_idx = find(strcmp(fuel_types, fuel_type));
+        if ~isempty(fuel_idx)
+            color = fuel_colors(fuel_idx, :); % Original color
+        else
+            color = [0.8, 0.8, 0.8]; % Gray for unknown types
+            fprintf('Unknown fuel type "%s" at row %d, using gray color\n', fuel_type, i);
+        end
+        x_val = data_sorted.(x_col)(i);
+        y_pos = bar_positions(i);
+        height_val = bar_heights(i);
+        % Draw rectangle: Keep only valid properties
+        rectangle('Position', [0, y_pos - height_val/2, x_val, height_val], ...
+                 'FaceColor', color, ...
+                 'EdgeColor', 'none', ...
+                 'Parent', ax1);
+    end
+    
+    % Main axes labels
+    ylim(ax1, [0, 100]);
+    set(ax1, 'YTick', 0:5:100);
+    yticklabels(ax1, arrayfun(@(y) sprintf('%d%%', y), 0:5:100, 'UniformOutput', false));
+    xlim(ax1, x_lim);
+    set(ax1, 'XTick', x_lim(1):x_ticks:x_lim(2));
+    ylabel(ax1, 'Cumulative percentage in output (%)', 'FontSize', font_size, 'FontName', font_name);
+    xlabel(ax1, x_label, 'VerticalAlignment', 'bottom', 'FontSize', font_size, 'FontName', font_name);
+    
+    % Draw axes borders
+    x_limits = xlim(ax1);
+    y_limits = ylim(ax1);
+    plot(ax1, x_limits, [y_limits(1) y_limits(1)], 'k-', 'LineWidth', 2);
+    plot(ax1, [x_limits(1) x_limits(1)], y_limits, 'k-', 'LineWidth', 2);
+    plot(ax1, [x_limits(2) x_limits(2)], y_limits, 'k-', 'LineWidth', 2);
+    
+    % Secondary axes (Right side)
+    ax2 = axes('Position', get(ax1, 'Position'), ...
+              'YAxisLocation', 'right', ...
+              'Color', 'none', ...
+              'YDir', 'reverse', ...
+              'YLim', [0, 100], ...
+              'XLim', x_lim, ...
+              'XTick', [], ...
+              'Box', 'off', ...
+              'XColor', 'none', ...
+              'YColor', 'k', ...
+              'TickDir', 'out', ...
+              'TickLength', [0.01, 0.01], ...
+              'FontSize', font_size, ...
+              'FontName', font_name);
+    ax2.TickDir = 'out';
+
+    % Secondary axes tick configuration
+    if ~isempty(custom_sec_ticks)
+        sec_ticks = custom_sec_ticks;
+        sec_positions = [];
+        valid_ticks = [];
+        for j = 1:length(sec_ticks)
+            tick = sec_ticks(j);
+            if ~isempty(sec_y)
+                [~, idx] = min(abs(sec_y - tick));
+                position = main_y(idx);
+                if position >= 0 && position <= 100
+                    sec_positions(end+1) = position;
+                    valid_ticks(end+1) = tick;
+                end
+            end
+        end
+    else
+        sec_min = min(sec_y);
+        sec_max = max(sec_y);
+        if sec_max > 50
+            sec_ticks = 0:10:100;
+        else
+            sec_ticks = linspace(sec_min, sec_max, 6);
+            sec_ticks = round(sec_ticks);
+        end
+        sec_positions = [];
+        valid_ticks = [];
+        for j = 1:length(sec_ticks)
+            tick = sec_ticks(j);
+            if ~isempty(sec_y)
+                [~, idx] = min(abs(sec_y - tick));
+                if abs(sec_y(idx) - tick) <= (sec_max - sec_min) * 0.1
+                    position = main_y(idx);
+                    if position >= 0 && position <= 100
+                        sec_positions(end+1) = position;
+                        valid_ticks(end+1) = tick;
+                    end
+                end
+            end
+        end
+        if length(sec_positions) < 2
+            sec_positions = linspace(0, 100, length(sec_ticks));
+            valid_ticks = sec_ticks;
+        end
+    end
+    
+    % Secondary axes labels
+    set(ax2, 'YTick', sec_positions);
+    set(ax2, 'YTickLabel', arrayfun(@(y) sprintf('%d%%', y), valid_ticks, 'UniformOutput', false));
+    ylabel(ax2, 'Cumulative percentage in emissions (%)', 'FontSize', font_size, 'FontName', font_name);
+    
+    % Draw number labels 
+    ax_no_label = [];
+    if ~isempty(no_labels)
+        if length(no_labels) ~= length(sec_positions)
+            fprintf('Warning: No. label count (%d) does not match tick count (%d)\n', length(no_labels), length(sec_positions));
+            min_length = min(length(no_labels), length(sec_positions));
+            no_labels = no_labels(1:min_length);
+            sec_positions = sec_positions(1:min_length);
+        end
+        offset = 1; 
+        ax_no_label = axes('Position', get(ax1, 'Position'), ...
+                     'Color', 'none', ...
+                     'YDir', 'reverse', ...
+                     'YLim', [0, 100], ...
+                     'XLim', x_lim, ...
+                     'XTick', [], ...
+                     'YTick', sec_positions, ...
+                     'YTickLabel', {}, ...
+                     'Box', 'off', ...
+                     'XColor', 'none', ...
+                     'YColor', 'none', ...
+                     'FontSize', font_size, ...
+                     'FontName', font_name);
+        set(ax_no_label, 'YAxisLocation', 'right');
+        for k = 1:length(no_labels)
+            text(x_lim(2) - offset, sec_positions(k), no_labels{k}, ...
+                 'Parent', ax_no_label, ...
+                 'HorizontalAlignment', 'right', ...
+                 'VerticalAlignment', 'middle', ...
+                 'FontSize', font_size, ...
+                 'FontName', font_name);
+        end
+    end
+    
+    % Axes layer order (Use only valid uistack options)
+    uistack(ax1, 'bottom');
+    uistack(ax2, 'up');
+    if ~isempty(ax_no_label)
+        uistack(ax_no_label, 'up');
+    end
+    
+    % ==============================
+    % Legend - Move to bottom left and increase font (New legend implementation)
+    % ==============================
+    legend_elements = [];
+    legend_labels = {};
+    fuel_order = {'coal', 'oil', 'gas'};
+    for k = 1:length(fuel_order)
+        if isKey(colors, fuel_order{k})
+            % Check if the fuel type exists in the data
+            if iscell(data_sorted.(type_col))
+                fuel_match = any(strcmpi(data_sorted.(type_col), fuel_order{k}));
+            else
+                fuel_match = any(strcmpi(data_sorted.(type_col), fuel_order{k}));
+            end
+            
+            if fuel_match
+                % Create patch element for legend
+                legend_elements(end+1) = patch([0, 0, 1, 1], [0, 1, 1, 0], colors(fuel_order{k}), 'EdgeColor', 'none');
+                % Capitalize the first letter of fuel type
+                fuel_capitalized = fuel_order{k};
+                fuel_capitalized(1) = upper(fuel_capitalized(1));
+                legend_labels{end+1} = fuel_capitalized;
+            end
+        end
+    end
+    
+    if ~isempty(legend_elements)
+        % Create custom legend: Bottom left position, font size 12, black border
+        legend_h = legend(ax1, legend_elements, legend_labels, ...
+               'Position', [0.6, 0.6, 0.08, 0.04], ... % Bottom left position [x, y, width, height]
+               'FontSize', 12, ... % Increased legend font size                      
+               'Box', 'on', ...                          
+               'EdgeColor', 'k', ...                     
+               'LineWidth', 0.5);                          
+        uistack(legend_h, 'top'); % Bring legend to front
+        fprintf('Custom legend created with fuel types: %s\n', strjoin(legend_labels, ', '));
+    else
+        fprintf('No valid fuel types found for legend creation\n');
+    end
+
+end 
+
+% ============================== Plotting Function Definition ==============================
+% Function: create_emission_plot
+% Purpose: Generate stacked bar chart for fossil fuel emissions + secondary axis for reduction
+% Inputs:
+%   data: Table with emission data (columns include year, coal, oil, gas, current, cumulative emission reduction)
+%   scenario_name: Scenario name (STEPS/APS)
+%   coal_color/oil_color/gas_color: RGB color values for fossil fuels
+%   reduction_color: RGB color for cumulative emission reduction line
+function create_emission_plot(data, scenario_name, coal_color, oil_color, gas_color, reduction_color)
+    % -------------------------- Critical Fix: Dynamic Column Matching --------------------------
+    % Get variable names (renamed by MATLAB) and original descriptions (Excel column names)
+    var_names = data.Properties.VariableNames;
+    var_descs = data.Properties.VariableDescriptions;
+    
+    % Define the original Excel column names we need to match (case-insensitive)
+    target_cols = {
+        'year', 'year';
+        'coal', 'coal';
+        'oil', 'oil';
+        'gas', 'gas';
+        'current', 'current';
+        'reduction', 'cumulative_emission_reduction'
+    };
+    
+    % Create a map to store actual variable names for each target column
+    col_map = containers.Map();
+    for i = 1:size(target_cols, 1)
+        col_key = target_cols{i, 1};
+        original_col_name = target_cols{i, 2};
+        % Find the index of the original column name in VariableDescriptions (case-insensitive)
+        match_idx = find(cellfun(@(x) contains(lower(strtrim(x)), lower(original_col_name)), var_descs));
+        
+        if isempty(match_idx)
+            % Fallback: Match by variable name if description match fails
+            match_idx = find(cellfun(@(x) contains(lower(x), lower(original_col_name)), var_names));
+        end
+        
+        if isempty(match_idx)
+            error(['Original column "' original_col_name '" not found in the Excel file']);
+        end
+        % Store the actual variable name
+        col_map(col_key) = var_names{match_idx(1)};
+    end
+    % -------------------------------------------------------------------------------------------
+
+    % Extract data using dynamically matched column names (no hardcoding!)
+    years = data.(col_map('year'));
+    coal_opt = data.(col_map('coal'));
+    oil_opt = data.(col_map('oil'));
+    gas_opt = data.(col_map('gas'));
+    current_total = data.(col_map('current'));
+    reduction_data = data.(col_map('reduction')); % This fixes the core error
+
+    % Create a large figure for high clarity
+    figure('Position', [100, 100, 2000, 1000]);
+
+    % Plot stacked bar chart for optimized fossil fuel emissions
+    bar_handle = bar(years, [coal_opt, oil_opt, gas_opt], 'stacked');
+
+    % Set fossil fuel colors per RGB values
+    bar_handle(1).FaceColor = coal_color; % Coal color
+    bar_handle(2).FaceColor = oil_color;  % Oil color
+    bar_handle(3).FaceColor = gas_color;  % Gas color
+
+    hold on; % Retain plot for additional elements
+
+    % Plot horizontal tick lines for current strategy emissions
+    for i = 1:length(years)
+        line([years(i)-0.3, years(i)+0.3], [current_total(i), current_total(i)], ...
+             'Color', 'k', 'LineWidth', 4);
+    end
+
+    % Set primary axis labels with font size
+    xlabel('Year', 'FontSize', 40);
+    ylabel('Emissions (GtCO_2e)', 'FontSize', 40);
+
+    % Add secondary y-axis for cumulative emission reduction
+    yyaxis right;
+
+    % Plot cumulative emission reduction line
+    plot(years, reduction_data, 'Color', reduction_color, 'LineWidth', 4, 'LineStyle', '-');
+
+    % Set secondary axis properties
+    ylabel({'Cumulative emission'; 'reduction (GtCO_2e)'}, 'FontSize', 40);
+    ylim([0 5]);
+    set(gca, 'YColor', 'k', 'FontSize', 40);
+
+    % Switch back to primary y-axis
+    yyaxis left;
+
+    % Add scenario letter label (a for STEPS, b for APS) in top-left corner
+    if strcmpi(scenario_name, 'STEPS')
+        letter = 'a';
+    else
+        letter = 'b';
+    end
+
+    % Add annotation text box (normalized coordinates for position consistency)
+    annotation('textbox', [0.06, 0.95, 0.05, 0.05], ...
+        'String', letter, ...
+        'FontSize', 50, ...
+        'FontWeight', 'normal',...
+        'EdgeColor', 'none', ...
+        'HorizontalAlignment', 'left', ...
+        'VerticalAlignment', 'top');
+
+    % Set legend for fossil fuel types
+    legend_handles = [bar_handle(1), bar_handle(2), bar_handle(3)];
+    legend_text = {'coal', 'oil', 'gas'};
+    leg = legend(legend_handles, legend_text, 'Location', 'north', 'FontSize', 40);
+
+    % Set x-axis ticks to all years (only label specified years to avoid clutter)
+    set(gca, 'XTick', years, 'FontSize', 40);
+    xtick_labels = cell(length(years), 1);
+    specified_years = [2024, 2030, 2035, 2040, 2045, 2050];
+
+    % Populate x-axis tick labels (empty for non-specified years)
+    for i = 1:length(years)
+        if ismember(years(i), specified_years)
+            xtick_labels{i} = num2str(years(i));
+        else
+            xtick_labels{i} = '';
+        end
+    end
+    set(gca, 'XTickLabel', xtick_labels, 'FontSize', 40);
+
+    % Set y-axis ticks and font size
+    set(gca, 'YTick', 0:2:10, 'FontSize', 40);
+
+    % Keep x-axis labels horizontal (no rotation)
+    xtickangle(0);
+
+    % Add grid lines for readability
+    grid on;
+
+    % Ensure primary y-axis ranges from 0 to 10
+    ylim([0 10]);
+
+    % Set figure and axes background to white
+    set(gcf, 'Color', 'white'); % Fix typo: gcf instead of fcf
+    set(gca, 'Color', 'white');
+
+    % Enforce font size for all text objects in the figure
+    set(findall(gcf, 'Type', 'Text'), 'FontSize', 40);
+
+    % Print success message to command window
+    disp(['Successfully generated plot for ' scenario_name ' scenario']);
+
+    % Keep figure open for inspection (uncomment to auto-close: close(gcf);)
+end
+
+
